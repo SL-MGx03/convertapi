@@ -83,12 +83,12 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
 // --- API Endpoints ---
 app.get('/', (req, res) => res.status(200).send('ConvertAI API is running. Visit /status for resource usage.'));
 
-// UPDATED: Serves the static HTML page
+// Serves the static HTML page
 app.get('/status', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// NEW: Provides status data as JSON
+// Provides status data as JSON
 app.get('/api/status', (req, res) => {
     exec('df -h /', (error, stdout, stderr) => {
         let diskInfo = { total: 'N/A', used: 'N/A', available: 'N/A', usage: 'N/A' };
@@ -122,7 +122,7 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-// --- Conversion Endpoints (Unchanged) ---
+// --- Conversion Endpoints ---
 app.post('/convert/pptx-to-pdf', upload.single('file'), (req, res) => handleConversion(req, res, 'pdf'));
 app.post('/convert/pdf-to-pptx', upload.single('file'), (req, res) => handleConversion(req, res, 'pptx', 'impress_pdf_import'));
 app.post('/convert/docx-to-pdf', upload.single('file'), (req, res) => handleConversion(req, res, 'pdf'));
