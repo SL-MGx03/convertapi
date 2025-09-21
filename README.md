@@ -114,5 +114,5 @@ This project is distributed under the MIT License. See the `LICENSE` file for mo
 
 ---
 *This repository owned by [SL-MGx03](https://github.com/SL-MGx03).*
-*MY Website [https://slmgx.live](https://slmgx.live)*
+*MY Website* [https://slmgx.live](https://slmgx.live)
 
