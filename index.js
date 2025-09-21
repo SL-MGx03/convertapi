@@ -9,111 +9,102 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // --- Middleware Setup ---
-
-// Enable CORS: This allows your frontend website to make requests to this API
 app.use(cors());
 
-// Create a directory for temporary file uploads if it doesn't exist
-const uploadDir = 'uploads';
+const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
-// Configure Multer for file uploads with a 25MB size limit
-const upload = multer({
-  dest: uploadDir,
-  limits: {
-    fileSize: 25 * 1024 * 1024, // 25 MB
-  },
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+});
+
+// --- Helper function to clean up files ---
+const cleanupFiles = (...files) => {
+  files.forEach(file => {
+    if (file && fs.existsSync(file)) {
+      fs.unlink(file, (err) => {
+        if (err) console.error(`Failed to delete file: ${file}`, err);
+      });
+    }
+  });
+};
 
 // --- API Endpoints ---
-
-// Health check endpoint to confirm the API is running
 app.get('/', (req, res) => {
-  res.status(200).send('ConvertAI API is running. Ready to convert files.');
+  res.status(200).send('ConvertAI API is running and ready.');
 });
 
-/**
- * PPTX to PDF Conversion Endpoint
- * This endpoint is fully functional.
- */
-app.post('/convert/pptx-to-pdf', upload.single('file'), (req, res, next) => {
+app.post('/convert/pptx-to-pdf', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded.' });
   }
 
   const inputFile = req.file.path;
-  const outputDir = path.dirname(inputFile); // Use the same 'uploads' directory
+  const outputDir = path.dirname(inputFile);
+  
+  console.log(`[JOB START] Received file: ${req.file.originalname}. Size: ${req.file.size} bytes.`);
+  console.log(`Input path: ${inputFile}`);
 
-  // This is the powerful LibreOffice command-line instruction
-  // --headless: Run without a graphical user interface
-  // --convert-to pdf: Specify the target format
-  // --outdir: Specify where to save the converted file
+  // Increased timeout to 2 minutes (120000 ms) for large files
   const command = `soffice --headless --convert-to pdf "${inputFile}" --outdir "${outputDir}"`;
-
-  exec(command, (error, stdout, stderr) => {
-    // Always delete the original uploaded PPTX to save space
-    fs.unlink(inputFile, (err) => {
-      if (err) console.error(`Failed to delete original file: ${inputFile}`, err);
-    });
-
+  exec(command, { timeout: 120000 }, (error, stdout, stderr) => {
     if (error) {
-      console.error('LibreOffice Conversion Error:', stderr);
+      console.error('[JOB FAILED] LibreOffice execution error:', error);
+      console.error('[STDERR]', stderr);
+      cleanupFiles(inputFile); // Clean up the failed input
+      // Provide a more specific error message
+      if (error.killed) {
+        return res.status(500).json({ error: 'Conversion process timed out or ran out of memory.' });
+      }
       return res.status(500).json({ error: 'File conversion failed on the server.' });
     }
 
-    // Construct the expected output filename
-    const outputFilename = path.basename(req.file.originalname, path.extname(req.file.originalname)) + '.pdf';
-    const outputFile = path.join(outputDir, outputFilename);
+    const expectedOutputFilename = path.basename(inputFile, path.extname(inputFile)) + '.pdf';
+    const outputFile = path.join(outputDir, expectedOutputFilename);
+    
+    console.log(`[JOB SUCCESS] stdout: ${stdout}`);
+    console.log(`Checking for output file: ${outputFile}`);
 
     if (!fs.existsSync(outputFile)) {
-      console.error('Conversion seemed to succeed, but output file was not found.');
-      return res.status(500).json({ error: 'An unknown conversion error occurred.' });
+      console.error('[JOB FAILED] Output file not found after conversion.');
+      cleanupFiles(inputFile);
+      return res.status(500).json({ error: 'Conversion succeeded, but the output file could not be found.' });
     }
 
-    // Send the converted file to the user for download
-    res.download(outputFile, outputFilename, (err) => {
-      if (err) {
-        console.error('Download Error:', err);
+    res.download(outputFile, path.basename(req.file.originalname, '.pptx') + '.pdf', (downloadErr) => {
+      if (downloadErr) {
+        console.error('[DOWNLOAD ERROR]', downloadErr);
       }
-      // After the download is complete (or failed), delete the converted PDF to save space
-      fs.unlink(outputFile, (unlinkErr) => {
-        if (unlinkErr) console.error(`Failed to delete converted file: ${outputFile}`, unlinkErr);
-      });
+      // Cleanup both original and converted files after download attempt
+      cleanupFiles(inputFile, outputFile);
+      console.log(`[JOB COMPLETE] Cleaned up files for job.`);
     });
   });
 });
 
-/**
- * PDF to PPTX Conversion Endpoint
- * This is a placeholder. Real conversion is not feasible with open-source tools.
- */
-app.post('/convert/pdf-to-pptx', (req, res) => {
-  res.status(501).json({
-    error: 'Not Implemented',
-    message: 'Converting PDF to an editable PPTX is an extremely complex task that is not supported by this API. This feature is for demonstration purposes only.',
-  });
-});
-
-
 // --- Error Handling ---
-
-// Custom error handler to catch file-size limit errors from Multer
 app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ error: `File too large. Maximum size is 25MB.` });
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: `File too large. Maximum size is 25MB.` });
+    }
   }
-  // Handle other errors
   if (err) {
-    return res.status(500).json({ error: `An unexpected error occurred: ${err.message}` });
+    console.error('[UNEXPECTED ERROR]', err);
+    return res.status(500).json({ error: `An unexpected server error occurred.` });
   }
   next();
 });
 
 // --- Server Start ---
-
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  console.log('When running on Replit, your public URL will be available in the webview.');
+  console.log(`Server is running on port ${PORT}`);
 });
