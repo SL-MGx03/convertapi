@@ -113,6 +113,6 @@ https://slmgx.live/convertAI
 This project is distributed under the MIT License. See the `LICENSE` file for more information.
 
 ---
-*This repository owned by [SL-MGx03](https://github.com/SL-MGx03).*
-*MY Website* [https://slmgx.live](https://slmgx.live)
+*This repository owned by [SL-MGx03](https://github.com/SL-MGx03).
+MY Website* [https://slmgx.live](https://slmgx.live)
 
