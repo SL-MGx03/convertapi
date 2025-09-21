@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ConvertAI API Status</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/status.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div id="status-indicator" class="status-indicator"></div>
+            <h1>ConvertAI API Status</h1>
+        </header>
+        <p class="subtitle">Real-time resource monitoring for the file conversion service.</p>
+
+        <div class="card">
+            <h2>Service Information</h2>
+            <div class="grid">
+                <div class="grid-item"><span>Service</span><strong id="service-name">Loading...</strong></div>
+                <div class="grid-item"><span>Status</span><strong id="service-status">Loading...</strong></div>
+                <div class="grid-item"><span>Timestamp</span><strong id="service-timestamp">Loading...</strong></div>
+                <div class="grid-item"><span>Node.js</span><strong id="service-node">Loading...</strong></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Process Resources</h2>
+            <div class="grid">
+                <div class="grid-item"><span>Uptime</span><strong id="process-uptime">Loading...</strong></div>
+                <div class="grid-item"><span>Memory (RSS)</span><strong id="process-rss">Loading...</strong></div>
+                <div class="grid-item"><span>Heap Used</span><strong id="process-heap">Loading...</strong></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>System Resources</h2>
+            <div class="grid two-col">
+                <div class="grid-item"><span>Platform</span><strong id="system-platform">Loading...</strong></div>
+                <div class="grid-item"><span>System Uptime</span><strong id="system-uptime">Loading...</strong></div>
+                <div class="grid-item full-width"><span>CPU Model</span><strong id="system-cpu">Loading...</strong></div>
+                <div class="grid-item"><span>CPU Load</span><strong id="system-load">Loading...</strong></div>
+                <div class="grid-item"><span>Disk Usage</span><strong id="system-disk">Loading...</strong></div>
+            </div>
+            <div class="memory-bar">
+                <div class="memory-label">
+                    <span>System Memory</span>
+                    <span id="system-mem-free">Loading...</span>
+                </div>
+                <progress id="system-mem-progress" value="0" max="100"></progress>
+                <div class="memory-total" id="system-mem-total">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const fetchData = async () => {
+                try {
+                    const response = await fetch('/api/status');
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    const data = await response.json();
+
+                    // Service Info
+                    document.getElementById('status-indicator').classList.add('online');
+                    document.getElementById('service-name').textContent = data.service;
+                    document.getElementById('service-status').textContent = data.status;
+                    document.getElementById('service-status').classList.add('online-text');
+                    document.getElementById('service-timestamp').textContent = new Date(data.timestamp).toLocaleString();
+                    document.getElementById('service-node').textContent = data.resources.process.nodeVersion;
+                    
+                    // Process Resources
+                    document.getElementById('process-uptime').textContent = data.resources.process.uptime;
+                    document.getElementById('process-rss').textContent = data.resources.process.memoryUsage.rss;
+                    document.getElementById('process-heap').textContent = `${data.resources.process.memoryUsage.heapUsed} / ${data.resources.process.memoryUsage.heapTotal}`;
+
+                    // System Resources
+                    document.getElementById('system-platform').textContent = `${data.resources.system.platform} (${data.resources.system.arch})`;
+                    document.getElementById('system-uptime').textContent = data.resources.system.uptime;
+                    document.getElementById('system-cpu').textContent = `${data.resources.system.cpu.model} (${data.resources.system.cpu.cores} cores)`;
+                    document.getElementById('system-load').textContent = data.resources.system.cpu.loadAverage.join(', ');
+                    document.getElementById('system-disk').textContent = `${data.resources.system.disk.used} / ${data.resources.system.disk.total} (${data.resources.system.disk.usage})`;
+
+                    // Memory Bar
+                    document.getElementById('system-mem-free').textContent = `${data.resources.system.memory.free} Free`;
+                    document.getElementById('system-mem-total').textContent = `Total: ${data.resources.system.memory.total}`;
+                    const memProgress = document.getElementById('system-mem-progress');
+                    memProgress.value = data.resources.system.memory.usedRaw;
+                    memProgress.max = data.resources.system.memory.totalRaw;
+
+                } catch (error) {
+                    console.error('Failed to fetch status:', error);
+                    document.getElementById('service-name').textContent = 'Error loading data';
+                }
+            };
+            
+            fetchData();
+            setInterval(fetchData, 15000); // Refresh every 15 seconds
+        });
+    </script>
+</body>
+</html>
