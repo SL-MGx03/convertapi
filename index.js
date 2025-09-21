@@ -1,3 +1,6 @@
+// CopyRight @SL-MGx03
+// MY Website https://slmgx.live
+
 const express = require('express');
 const multer = require('multer');
 const { exec } = require('child_process');
