@@ -1,10 +1,11 @@
 {
   "name": "convert-ai-api",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "File conversion API for ConvertAI, running on Replit.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "postinstall": "python3 -m pip install -r requirements.txt || echo 'Python deps skipped'"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,6 +17,7 @@
     "api",
     "pptx",
     "pdf",
-    "converter"
+    "converter",
+    "docx"
   ]
 }
