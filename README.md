@@ -2,9 +2,12 @@
 
 ![Node.js](https://img.shields.io/badge/Node.js-18.x-339933?style=for-the-badge&logo=nodedotjs)
 ![Platform](https://img.shields.io/badge/Platform-Replit-667881?style=for-the-badge&logo=replit)
+![Vercel](https://img.shields.io/badge/Vercel-Ready-black?style=for-the-badge&logo=vercel)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)
 
-A robust, self-hosted file conversion API designed to run on Replit. This backend service leverages the power of LibreOffice to handle complex document and presentation conversions, providing a simple REST API interface for your applications.
+A robust, self-hosted file conversion API designed to run on Replit or Vercel. This backend service leverages the power of LibreOffice to handle complex document and presentation conversions, providing a simple REST API interface for your applications.
+
+> **⚠️ Important Note about Vercel:** While this application is now Vercel-compatible in terms of structure, **LibreOffice conversions cannot run on Vercel's serverless platform**. The Vercel deployment provides API structure and status endpoints but returns informative error messages for conversion endpoints. For full conversion functionality, deploy to platforms that support system packages (Railway, Render, Fly.io) or use cloud conversion APIs.
 
 ### **[Live API Status Page →](https://f37b2347-8d76-44a5-91e9-960f851f7f85-00-1jakbs91d8f57.pike.replit.dev/status)**
 
@@ -27,13 +30,84 @@ A robust, self-hosted file conversion API designed to run on Replit. This backen
 
 - **Backend:** Node.js, Express.js
 - **File Uploads:** `multer`
-- **Environment:** Replit
-- **Core Conversion Engine:** LibreOffice (installed via the Nix package manager on Replit)
+- **Deployment Platforms:** Replit (with LibreOffice), Vercel (serverless structure only)
+- **Core Conversion Engine:** LibreOffice (available on Replit, not on Vercel)
 - **Frontend Status Page:** Vanilla HTML, CSS, and JavaScript.
 
 ---
 
-## How to Deploy Your Own Instance on Replit
+## Deployment Options
+
+This application can be deployed to multiple platforms with different capabilities:
+
+### Option 1: Vercel (Serverless - Limited Functionality)
+
+**✅ Available:**
+- API structure and routing
+- Health check endpoints
+- Status monitoring endpoints
+
+**❌ Not Available:**
+- LibreOffice conversions (system packages not supported)
+- Long-running conversion processes
+
+**Recommended for:** Deploying the API structure and integrating with external conversion services.
+
+### Option 2: Replit, Railway, Render, Fly.io (Full Functionality)
+
+**✅ Available:**
+- All conversion features
+- LibreOffice integration
+- Complete document processing
+
+**Recommended for:** Full-featured file conversion service.
+
+---
+
+## How to Deploy to Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/SL-MGx03/convertapi)
+
+### Method 1: One-Click Deploy
+
+Click the "Deploy with Vercel" button above and follow the prompts.
+
+### Method 2: Manual Deploy via Vercel CLI
+
+1. Install Vercel CLI:
+   ```bash
+   npm install -g vercel
+   ```
+
+2. Clone your fork:
+   ```bash
+   git clone https://github.com/YourUsername/convertapi.git
+   cd convertapi
+   ```
+
+3. Deploy:
+   ```bash
+   vercel
+   ```
+
+4. Follow the prompts to link your project and deploy.
+
+### Method 3: Deploy via GitHub Integration
+
+1. Fork this repository
+2. Go to [vercel.com](https://vercel.com)
+3. Click "New Project"
+4. Import your forked repository
+5. Click "Deploy"
+
+**After Deployment:**
+- Access your API at: `https://your-project.vercel.app/api`
+- Check status at: `https://your-project.vercel.app/api/status`
+- Note: Conversion endpoints will return 503 with information about alternatives
+
+---
+
+## How to Deploy Your Own Instance on Replit (Full Functionality)
 
 Follow these simple steps to deploy your own version of the ConvertAI API for free.
 
@@ -66,9 +140,23 @@ Replit automatically hosts your running application. The public URL for your API
 
 ## API Endpoints
 
+### Vercel Deployment
+
+On Vercel, the endpoints are structured as serverless functions:
+
+-   **Health Check**: `GET /api/healthz`
+-   **Status**: `GET /api/status`
+-   **Conversions** (Return 503 with alternatives):
+    -   `POST /api/convert/pptx-to-pdf`
+    -   `POST /api/convert/pdf-to-pptx`
+    -   `POST /api/convert/docx-to-pdf`
+    -   `POST /api/convert/pdf-to-docx`
+
+### Replit Deployment (Full Functionality)
+
 All conversion endpoints are `POST` requests and expect a `multipart/form-data` body with a single file field named `file`.
 
-### Conversions
+#### Conversions
 
 -   **PPTX to PDF**
     -   `POST /convert/pptx-to-pdf`
@@ -88,12 +176,45 @@ curl -X POST \
   -o "converted_document.pdf"
 ```
 
-### Status Monitoring
+#### Status Monitoring
 
 -   **HTML Status Page**
     -   `GET /status`: Returns a full HTML page displaying the real-time status of the server.
 -   **JSON Status Data**
     -   `GET /api/status`: Returns a JSON object with detailed resource usage, perfect for programmatic monitoring.
+
+---
+
+## Alternatives for Vercel Users
+
+Since LibreOffice cannot run on Vercel's serverless platform, here are recommended alternatives:
+
+### 1. Use Cloud Conversion APIs
+
+Integrate a third-party conversion service:
+
+-   **[CloudConvert](https://cloudconvert.com/)** - Supports 200+ formats
+-   **[ConvertAPI](https://www.convertapi.com/)** - Document conversion API
+-   **[Adobe PDF Services](https://developer.adobe.com/document-services/)** - Enterprise-grade PDF tools
+-   **[Zamzar API](https://developers.zamzar.com/)** - File conversion API
+
+### 2. Deploy to Container-Friendly Platforms
+
+For full LibreOffice support, deploy to:
+
+-   **[Railway](https://railway.app/)** - Easy deployment with Nixpacks
+-   **[Render](https://render.com/)** - Free tier with Docker support
+-   **[Fly.io](https://fly.io/)** - Global app deployment
+-   **[Google Cloud Run](https://cloud.google.com/run)** - Serverless containers
+-   **[AWS ECS](https://aws.amazon.com/ecs/)** - Elastic Container Service
+
+### 3. Hybrid Approach
+
+-   Deploy the API on Vercel
+-   Run conversion workers on a separate service
+-   Use a job queue (e.g., Redis, Bull) to coordinate
+
+---
 
 ## Contributing
 
