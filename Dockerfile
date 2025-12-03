@@ -3,21 +3,24 @@ FROM node:18-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       libreoffice \
+      libreoffice-writer \
+      libreoffice-calc \
+      libreoffice-impress \
+      libreoffice-draw \
+      libreoffice-common \
+      fonts-dejavu \
       poppler-utils \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Install Node dependencies
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
-
-# Copy application source
 COPY . .
-
-# Ensure directories exist
 RUN mkdir -p uploads public
+
+# Optional: show where binaries are
+RUN which soffice && which pdftotext
 
 EXPOSE 3000
 CMD ["npm", "start"]
