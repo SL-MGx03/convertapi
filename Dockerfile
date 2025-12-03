@@ -1,35 +1,32 @@
 FROM node:18-slim
 
-# Install system dependencies: LibreOffice (soffice), pdftotext, Python 3 and pip
+# Install LibreOffice and pdftotext. Include core packages so soffice exists.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       libreoffice \
+      libreoffice-common \
+      libreoffice-core \
       libreoffice-writer \
       libreoffice-impress \
       libreoffice-calc \
       poppler-utils \
-      python3 \
-      python3-pip \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Node dependencies with npm (avoids Yarn lockfile mixing issues)
+# Install Node dependencies
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
-# Copy application source (Node, public/, python/)
+# Copy app
 COPY . .
 
-# Install Python dependencies from python/requirements.txt if present
-RUN if [ -f python/requirements.txt ]; then pip3 install -r python/requirements.txt; else echo "No python/requirements.txt found"; fi
-
-# Ensure runtime dirs exist
+# Ensure dirs exist
 RUN mkdir -p uploads public
 
-# Optional: verify binaries exist
-RUN which soffice && which pdftotext && python3 --version
+# For debugging: show where soffice is
+RUN which soffice || true && ls -l /usr/bin/soffice || true && ls -l /usr/lib/libreoffice/program/soffice || true
 
 EXPOSE 3000
 CMD ["npm", "start"]
