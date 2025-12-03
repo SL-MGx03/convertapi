@@ -35,6 +35,10 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Absolute paths for required system binaries (override via env if needed)
+const SOFFICE = process.env.SOFFICE_PATH || '/usr/bin/soffice';
+const PDFTOTEXT = process.env.PDFTOTEXT_PATH || '/usr/bin/pdftotext';
+
 // ---------- Static / Middleware ----------
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors());
@@ -104,18 +108,18 @@ function prewarmLibreOffice() {
   warmState.lastWarmStart = Date.now();
   warmState.error = null;
 
-  const cmd = 'soffice --headless --invisible --version';
+  const cmd = `"${SOFFICE}" --headless --invisible --version`;
 
   warmPromise = new Promise((resolve) => {
     exec(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
       warmState.lastWarmEnd = Date.now();
       warmState.warming = false;
       if (err) {
-        warmState.error = stderr || err.message;
+        warmState.error = (stderr && stderr.trim()) || err.message || 'Unknown error';
         console.error('[PREWARM ERROR]', warmState.error);
         return resolve(false);
       }
-      console.log('[PREWARM OUTPUT]', stdout.trim());
+      console.log('[PREWARM OUTPUT]', (stdout || '').toString().trim());
       warmState.warmed = true;
       resolve(true);
     });
@@ -149,10 +153,11 @@ const handleConversion = async (req, res, outputExtension, libreofficeFilter) =>
   const outputDir = path.dirname(inputFile);
 
   let command;
+  // If converting from PDF to DOCX using LibreOffice’s PDF import filter
   if (libreofficeFilter) {
-    command = `soffice --headless --infilter=${libreofficeFilter} --convert-to ${outputExtension} "${inputFile}" --outdir "${outputDir}"`;
+    command = `"${SOFFICE}" --headless --infilter=${libreofficeFilter} --convert-to ${outputExtension} "${inputFile}" --outdir "${outputDir}"`;
   } else {
-    command = `soffice --headless --convert-to ${outputExtension} "${inputFile}" --outdir "${outputDir}"`;
+    command = `"${SOFFICE}" --headless --convert-to ${outputExtension} "${inputFile}" --outdir "${outputDir}"`;
   }
 
   console.log(`[JOB START] ${req.file.originalname} -> .${outputExtension}`);
@@ -167,6 +172,9 @@ const handleConversion = async (req, res, outputExtension, libreofficeFilter) =>
       cleanupFiles(inputFile);
       if (error.killed) {
         return res.status(500).json({ error: 'Conversion timed out or exceeded resource limits.' });
+      }
+      if ((stderr || '').includes('not found')) {
+        return res.status(500).json({ error: 'LibreOffice (soffice) not found. Ensure it is installed and SOFFICE_PATH is set correctly.' });
       }
       return res.status(500).json({ error: 'Conversion failed. Possibly unsupported or corrupt file.' });
     }
@@ -189,7 +197,13 @@ const handleConversion = async (req, res, outputExtension, libreofficeFilter) =>
 
 // ---------- Routes ----------
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  // Serve status page if present, otherwise a simple message
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(200).send('ConvertAI API is running. Add public/index.html for a status page.');
+  }
 });
 
 // Health: fast check
@@ -259,7 +273,7 @@ app.get('/api/status', (req, res) => {
           platform: os.platform(),
           arch: os.arch(),
           cpu: {
-            model: cpus[0].model,
+            model: (cpus[0] && cpus[0].model) || 'unknown',
             cores: cpus.length,
             loadAverage: os.loadavg().map(l => l.toFixed(2))
           },
@@ -269,7 +283,11 @@ app.get('/api/status', (req, res) => {
             usedRaw: usedMem,
             totalRaw: totalMem
           },
-            disk: diskInfo
+          disk: diskInfo,
+          binaries: {
+            sofficePath: SOFFICE,
+            pdftotextPath: PDFTOTEXT
+          }
         }
       }
     });
@@ -287,6 +305,7 @@ app.post('/convert/docx-to-pdf', upload.single('file'),
   (req, res) => handleConversion(req, res, 'pdf'));
 
 app.post('/convert/pdf-to-docx', upload.single('file'),
+  // For PDF -> DOCX, LibreOffice’s writer_pdf_import is used here
   (req, res) => handleConversion(req, res, 'docx', 'writer_pdf_import'));
 
 // Error Middleware
