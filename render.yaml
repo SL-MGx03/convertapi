@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: convert-ai-api
+    env: docker
+    plan: free
+    autoDeploy: true
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    numInstances: 1
+    region: oregon
+    envVars:
+      - key: NODE_ENV
+        value: production
