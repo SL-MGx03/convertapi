@@ -1,6 +1,6 @@
 {
   "name": "convert-ai-api",
-  "version": "2.1.1",
+  "version": "2.1.4",
   "description": "File conversion API for ConvertAI, deployable on Render.",
   "main": "index.js",
   "scripts": {
@@ -9,7 +9,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^2.0.0"
   },
   "keywords": [
     "render",
