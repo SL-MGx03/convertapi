@@ -5,7 +5,7 @@ services:
     plan: free
     autoDeploy: true
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /
+    healthCheckPath: /healthz
     numInstances: 1
     region: oregon
     envVars:
