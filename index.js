@@ -51,9 +51,20 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
 
-// Resolve binary paths
-const SOFFICE = process.env.SOFFICE_PATH || '/usr/bin/soffice';
-const PDFTOTEXT = process.env.PDFTOTEXT_PATH || '/usr/bin/pdftotext';
+// Resolve binary paths robustly (no shell needed)
+function pickExisting(paths) {
+  for (const p of paths) {
+    try { if (fs.existsSync(p)) return p; } catch {}
+  }
+  return null;
+}
+const SOFFICE = process.env.SOFFICE_PATH ||
+  pickExisting(['/usr/bin/soffice', '/usr/lib/libreoffice/program/soffice']) ||
+  'soffice';
+const PDFTOTEXT = process.env.PDFTOTEXT_PATH ||
+  pickExisting(['/usr/bin/pdftotext', '/usr/local/bin/pdftotext']) ||
+  'pdftotext';
+console.log('[BIN PATHS]', { SOFFICE, PDFTOTEXT });
 
 const cleanupFiles = (...files) => {
   files.forEach(file => {
@@ -75,31 +86,74 @@ const formatSeconds = (seconds) => {
   const s = Math.floor(seconds % 60);
   return `${d}d ${h}h ${m}m ${s}s`;
 };
-const getLatestFile = (dir, ext) => {
-  const files = fs.readdirSync(dir)
-    .filter(f => f.endsWith(`.${ext}`))
-    .map(f => ({ f, time: fs.statSync(path.join(dir, f)).mtime }))
-    .sort((a, b) => b.time - a.time);
-  return files.length ? path.join(dir, files[0].f) : null;
-};
+
+function listFiles(dir, ext) {
+  try {
+    return fs.readdirSync(dir)
+      .filter(f => f.toLowerCase().endsWith(`.${ext.toLowerCase()}`))
+      .map(f => ({
+        name: f,
+        full: path.join(dir, f),
+        mtime: fs.statSync(path.join(dir, f)).mtimeMs
+      }));
+  } catch {
+    return [];
+  }
+}
+
+// Wait for a new file with extension ext that appears after startMs
+async function waitForOutputFile(dir, ext, startMs, timeoutMs = 5000, intervalMs = 150) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const files = listFiles(dir, ext).filter(f => f.mtime >= startMs - 1);
+    if (files.length) {
+      // pick the newest
+      files.sort((a, b) => b.mtime - a.mtime);
+      return files[0].full;
+    }
+    await new Promise(res => setTimeout(res, intervalMs));
+  }
+  return null;
+}
+
+// Build a safer expected name: LO typically uses original basename
+function expectedOutputByOriginal(originalName, outExt) {
+  const base = path.basename(originalName).replace(/\.[^.]+$/, '');
+  return `${base}.${outExt}`;
+}
 
 // Conversion
-const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
+const handleConversion = async (req, res, outputExtension, libreofficeFormat) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
   const inputFile = req.file.path;
   const outputDir = path.dirname(inputFile);
-  console.log(`[JOB START] Converting ${req.file.originalname} to ${outputExtension}. Using soffice at ${SOFFICE}`);
+  const originalName = req.file.originalname;
+  const startMs = Date.now();
+
+  console.log(`[JOB START] Converting ${originalName} to ${outputExtension}. Using soffice at ${SOFFICE}`);
 
   let command;
-  if (outputExtension === 'docx' && req.file.mimetype === 'application/pdf') {
+  // Prefer explicit filters for better fidelity and predictable output
+  if (outputExtension === 'pdf' && /\.pptx$/i.test(originalName)) {
+    // PPTX -> PDF
+    command = `"${SOFFICE}" --headless --convert-to pdf:impress_pdf_Export "${inputFile}" --outdir "${outputDir}"`;
+  } else if (outputExtension === 'pdf' && /\.docx$/i.test(originalName)) {
+    // DOCX -> PDF
+    command = `"${SOFFICE}" --headless --convert-to pdf:writer_pdf_Export "${inputFile}" --outdir "${outputDir}"`;
+  } else if (outputExtension === 'pptx' && req.file.mimetype === 'application/pdf') {
+    // PDF -> PPTX
+    command = `"${SOFFICE}" --headless --infilter="impress_pdf_import" --convert-to pptx "${inputFile}" --outdir "${outputDir}"`;
+  } else if (outputExtension === 'docx' && req.file.mimetype === 'application/pdf') {
+    // PDF -> DOCX, use pdftotext + LO writer import
     command = `"${PDFTOTEXT}" "${inputFile}" - | "${SOFFICE}" --headless --infilter="writer_pdf_import" --convert-to docx --outdir "${outputDir}" /dev/stdin`;
   } else {
+    // Generic
     command = `"${SOFFICE}" --headless --convert-to ${libreofficeFormat || outputExtension} "${inputFile}" --outdir "${outputDir}"`;
   }
 
-  exec(command, { timeout: 120000 }, (error, stdout, stderr) => {
+  exec(command, { timeout: 120000 }, async (error, stdout, stderr) => {
     if (error) {
-      console.error(`[JOB FAILED] Error for ${req.file.originalname}:`, stderr || error);
+      console.error(`[JOB FAILED] Error for ${originalName}:`, stderr || error);
       cleanupFiles(inputFile);
       if (error.killed) return res.status(500).json({ error: 'Conversion process timed out or ran out of memory.' });
       if ((stderr || '').toString().includes('not found')) {
@@ -108,18 +162,33 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
       return res.status(500).json({ error: 'File conversion failed. The file may be unsupported or corrupt.' });
     }
 
-    const outputFile = getLatestFile(outputDir, outputExtension);
+    // Try multiple strategies to locate the output
+    // 1) Wait for any new file with the expected extension after startMs
+    let outputFile = await waitForOutputFile(outputDir, outputExtension, startMs);
+
+    // 2) If still missing, check the specific expected name by original basename
+    if (!outputFile) {
+      const byOriginal = path.join(outputDir, expectedOutputByOriginal(originalName, outputExtension));
+      if (fs.existsSync(byOriginal)) outputFile = byOriginal;
+    }
+
+    // 3) As a final fallback, check the timestamped upload basename
+    if (!outputFile) {
+      const byTemp = path.join(outputDir, path.basename(inputFile, path.extname(inputFile)) + `.${outputExtension}`);
+      if (fs.existsSync(byTemp)) outputFile = byTemp;
+    }
+
     if (!outputFile) {
       console.error('[JOB FAILED] Output file not found after conversion.');
       cleanupFiles(inputFile);
       return res.status(500).json({ error: 'Conversion succeeded, but the output file could not be found.' });
     }
 
-    const safeOriginalName = path.basename(req.file.originalname).replace(/\.\w+$/, '');
+    const safeOriginalName = path.basename(originalName).replace(/\.\w+$/, '');
     res.download(outputFile, `${safeOriginalName}.${outputExtension}`, (downloadErr) => {
       if (downloadErr) console.error('[DOWNLOAD ERROR]', downloadErr);
       cleanupFiles(inputFile, outputFile);
-      console.log(`[JOB COMPLETE] Cleaned up files for ${req.file.originalname}.`);
+      console.log(`[JOB COMPLETE] Cleaned up files for ${originalName}.`);
     });
   });
 };
