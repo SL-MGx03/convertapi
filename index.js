@@ -35,11 +35,12 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// --- CORS MUST COME BEFORE STATIC/ROUTES ---
+app.use(cors());                    // Allow all origins by default
+app.options('*', cors());           // Handle preflight for all routes
+
 // --- Static File Setup ---
 app.use(express.static(path.join(__dirname, 'public')));
-
-// --- Middleware & CORS ---
-app.use(cors());
 
 // --- Multer Storage Setup ---
 const uploadDir = path.join(__dirname, 'uploads');
@@ -79,10 +80,8 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
   console.log(`[JOB START] Converting ${req.file.originalname} to ${outputExtension}.`);
   let command;
   if (outputExtension === 'docx' && req.file.mimetype === 'application/pdf') {
-      // PDF -> DOCX using pdftotext + LibreOffice PDF import
       command = `pdftotext "${inputFile}" - | soffice --headless --infilter="writer_pdf_import" --convert-to docx --outdir "${outputDir}" /dev/stdin`;
   } else {
-      // Generic LibreOffice conversion
       command = `soffice --headless --convert-to ${libreofficeFormat || outputExtension} "${inputFile}" --outdir "${outputDir}"`;
   }
   exec(command, { timeout: 120000 }, (error, stdout, stderr) => {
@@ -90,9 +89,6 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
       console.error(`[JOB FAILED] Error for ${req.file.originalname}:`, stderr || error);
       cleanupFiles(inputFile);
       if (error.killed) return res.status(500).json({ error: 'Conversion process timed out or ran out of memory.' });
-      if ((stderr || '').toString().includes('not found')) {
-        return res.status(500).json({ error: 'Conversion binary not found (soffice/pdftotext). Ensure Dockerfile installs LibreOffice and poppler-utils.' });
-      }
       return res.status(500).json({ error: 'File conversion failed. The file may be unsupported or corrupt.' });
     }
     const safeOriginalName = path.basename(req.file.originalname).replace(/\.\w+$/, '');
