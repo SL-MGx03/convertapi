@@ -35,14 +35,14 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS first
+// CORS first so every route/static gets headers
 app.use(cors());
 app.options('*', cors());
 
-// Static
+// Serve static files (status page lives in public/)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Multer
+// Uploads via Multer
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
@@ -51,7 +51,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
 
-// Resolve binary paths robustly (no shell needed)
+// Robust binary path detection (no shell required)
 function pickExisting(paths) {
   for (const p of paths) {
     try { if (fs.existsSync(p)) return p; } catch {}
@@ -64,8 +64,10 @@ const SOFFICE = process.env.SOFFICE_PATH ||
 const PDFTOTEXT = process.env.PDFTOTEXT_PATH ||
   pickExisting(['/usr/bin/pdftotext', '/usr/local/bin/pdftotext']) ||
   'pdftotext';
+
 console.log('[BIN PATHS]', { SOFFICE, PDFTOTEXT });
 
+// Helpers
 const cleanupFiles = (...files) => {
   files.forEach(file => {
     if (file && fs.existsSync(file)) {
@@ -87,6 +89,7 @@ const formatSeconds = (seconds) => {
   return `${d}d ${h}h ${m}m ${s}s`;
 };
 
+// File discovery for LO outputs
 function listFiles(dir, ext) {
   try {
     return fs.readdirSync(dir)
@@ -100,14 +103,11 @@ function listFiles(dir, ext) {
     return [];
   }
 }
-
-// Wait for a new file with extension ext that appears after startMs
-async function waitForOutputFile(dir, ext, startMs, timeoutMs = 5000, intervalMs = 150) {
+async function waitForOutputFile(dir, ext, startMs, timeoutMs = 8000, intervalMs = 150) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const files = listFiles(dir, ext).filter(f => f.mtime >= startMs - 1);
     if (files.length) {
-      // pick the newest
       files.sort((a, b) => b.mtime - a.mtime);
       return files[0].full;
     }
@@ -115,14 +115,12 @@ async function waitForOutputFile(dir, ext, startMs, timeoutMs = 5000, intervalMs
   }
   return null;
 }
-
-// Build a safer expected name: LO typically uses original basename
 function expectedOutputByOriginal(originalName, outExt) {
   const base = path.basename(originalName).replace(/\.[^.]+$/, '');
   return `${base}.${outExt}`;
 }
 
-// Conversion
+// Core conversion handler with explicit filters and robust output detection
 const handleConversion = async (req, res, outputExtension, libreofficeFormat) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
   const inputFile = req.file.path;
@@ -133,25 +131,25 @@ const handleConversion = async (req, res, outputExtension, libreofficeFormat) =>
   console.log(`[JOB START] Converting ${originalName} to ${outputExtension}. Using soffice at ${SOFFICE}`);
 
   let command;
-  // Prefer explicit filters for better fidelity and predictable output
+  // Explicit filters for predictable output/fidelity
   if (outputExtension === 'pdf' && /\.pptx$/i.test(originalName)) {
     // PPTX -> PDF
     command = `"${SOFFICE}" --headless --convert-to pdf:impress_pdf_Export "${inputFile}" --outdir "${outputDir}"`;
-  } else if (outputExtension === 'pdf' && /\.docx$/i.test(originalName)) {
-    // DOCX -> PDF
+  } else if (outputExtension === 'pdf' && /\.(docx|doc)$/i.test(originalName)) {
+    // DOCX/DOC -> PDF
     command = `"${SOFFICE}" --headless --convert-to pdf:writer_pdf_Export "${inputFile}" --outdir "${outputDir}"`;
   } else if (outputExtension === 'pptx' && req.file.mimetype === 'application/pdf') {
     // PDF -> PPTX
     command = `"${SOFFICE}" --headless --infilter="impress_pdf_import" --convert-to pptx "${inputFile}" --outdir "${outputDir}"`;
   } else if (outputExtension === 'docx' && req.file.mimetype === 'application/pdf') {
-    // PDF -> DOCX, use pdftotext + LO writer import
+    // PDF -> DOCX (text PDFs best)
     command = `"${PDFTOTEXT}" "${inputFile}" - | "${SOFFICE}" --headless --infilter="writer_pdf_import" --convert-to docx --outdir "${outputDir}" /dev/stdin`;
   } else {
-    // Generic
+    // Generic fallback
     command = `"${SOFFICE}" --headless --convert-to ${libreofficeFormat || outputExtension} "${inputFile}" --outdir "${outputDir}"`;
   }
 
-  exec(command, { timeout: 120000 }, async (error, stdout, stderr) => {
+  exec(command, { timeout: 180000 }, async (error, stdout, stderr) => {
     if (error) {
       console.error(`[JOB FAILED] Error for ${originalName}:`, stderr || error);
       cleanupFiles(inputFile);
@@ -162,17 +160,13 @@ const handleConversion = async (req, res, outputExtension, libreofficeFormat) =>
       return res.status(500).json({ error: 'File conversion failed. The file may be unsupported or corrupt.' });
     }
 
-    // Try multiple strategies to locate the output
-    // 1) Wait for any new file with the expected extension after startMs
+    // Locate output reliably
     let outputFile = await waitForOutputFile(outputDir, outputExtension, startMs);
 
-    // 2) If still missing, check the specific expected name by original basename
     if (!outputFile) {
       const byOriginal = path.join(outputDir, expectedOutputByOriginal(originalName, outputExtension));
       if (fs.existsSync(byOriginal)) outputFile = byOriginal;
     }
-
-    // 3) As a final fallback, check the timestamped upload basename
     if (!outputFile) {
       const byTemp = path.join(outputDir, path.basename(inputFile, path.extname(inputFile)) + `.${outputExtension}`);
       if (fs.existsSync(byTemp)) outputFile = byTemp;
@@ -193,7 +187,7 @@ const handleConversion = async (req, res, outputExtension, libreofficeFormat) =>
   });
 };
 
-// Routes
+// Basic routes
 app.get('/', (req, res) => res.status(200).send('ConvertAI API is running. Visit /status for resource usage.'));
 app.get('/status', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/api/status', (req, res) => {
@@ -236,7 +230,7 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// No-op endpoints to satisfy frontend
+// No-op endpoints to satisfy frontend (no keepalive logic)
 app.get('/healthz', (req, res) => res.status(200).json({ ok: true, ts: Date.now() }));
 app.post('/warm', (req, res) => res.status(200).json({ warmed: false, message: 'Warm disabled by configuration.' }));
 
