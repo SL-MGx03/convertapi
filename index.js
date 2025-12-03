@@ -224,8 +224,13 @@ app.get('/api/status', (req, res) => {
     if (!error && stdout) {
       const lines = stdout.trim().split('\n');
       if (lines.length > 1) {
-        const parts = lines[1].split(/\s+/);
-        diskInfo = { total: parts[1], used: parts[2], available: parts[3], usage: parts[4] };
+        const parts = lines[1]?.split(/\s+/);
+        diskInfo = {
+          total: parts?.[1] ?? 'N/A',
+          used: parts?.[2] ?? 'N/A',
+          available: parts?.[3] ?? 'N/A',
+          usage: parts?.[4] ?? 'N/A'
+        };
       }
     }
     const totalMem = os.totalmem();
