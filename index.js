@@ -35,32 +35,36 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- CORS (before static/routes) ---
+// CORS first
 app.use(cors());
 app.options('*', cors());
 
-// --- Static File Setup ---
+// Static
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- Multer Storage Setup ---
+// Multer
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
-const upload = multer({ storage: storage, limits: { fileSize: 25 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
 
-// --- Helper Functions ---
+// Resolve binary paths
+const SOFFICE = process.env.SOFFICE_PATH || '/usr/bin/soffice';
+const PDFTOTEXT = process.env.PDFTOTEXT_PATH || '/usr/bin/pdftotext';
+
 const cleanupFiles = (...files) => {
   files.forEach(file => {
-    if (file && fs.existsSync(file)) fs.unlink(file, (err) => { if (err) console.error(`Failed to delete file: ${file}`, err); });
+    if (file && fs.existsSync(file)) {
+      fs.unlink(file, (err) => { if (err) console.error(`Failed to delete file: ${file}`, err); });
+    }
   });
 };
 const formatBytes = (bytes) => {
   if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const k = 1024; const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
@@ -71,39 +75,47 @@ const formatSeconds = (seconds) => {
   const s = Math.floor(seconds % 60);
   return `${d}d ${h}h ${m}m ${s}s`;
 };
+const getLatestFile = (dir, ext) => {
+  const files = fs.readdirSync(dir)
+    .filter(f => f.endsWith(`.${ext}`))
+    .map(f => ({ f, time: fs.statSync(path.join(dir, f)).mtime }))
+    .sort((a, b) => b.time - a.time);
+  return files.length ? path.join(dir, files[0].f) : null;
+};
 
-// --- Generic Conversion Logic ---
+// Conversion
 const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
   const inputFile = req.file.path;
   const outputDir = path.dirname(inputFile);
-  console.log(`[JOB START] Converting ${req.file.originalname} to ${outputExtension}.`);
+  console.log(`[JOB START] Converting ${req.file.originalname} to ${outputExtension}. Using soffice at ${SOFFICE}`);
+
   let command;
   if (outputExtension === 'docx' && req.file.mimetype === 'application/pdf') {
-      // PDF -> DOCX using pdftotext + LibreOffice PDF import
-      command = `pdftotext "${inputFile}" - | soffice --headless --infilter="writer_pdf_import" --convert-to docx --outdir "${outputDir}" /dev/stdin`;
+    command = `"${PDFTOTEXT}" "${inputFile}" - | "${SOFFICE}" --headless --infilter="writer_pdf_import" --convert-to docx --outdir "${outputDir}" /dev/stdin`;
   } else {
-      // Generic LibreOffice conversion
-      command = `soffice --headless --convert-to ${libreofficeFormat || outputExtension} "${inputFile}" --outdir "${outputDir}"`;
+    command = `"${SOFFICE}" --headless --convert-to ${libreofficeFormat || outputExtension} "${inputFile}" --outdir "${outputDir}"`;
   }
+
   exec(command, { timeout: 120000 }, (error, stdout, stderr) => {
     if (error) {
       console.error(`[JOB FAILED] Error for ${req.file.originalname}:`, stderr || error);
       cleanupFiles(inputFile);
       if (error.killed) return res.status(500).json({ error: 'Conversion process timed out or ran out of memory.' });
       if ((stderr || '').toString().includes('not found')) {
-        return res.status(500).json({ error: 'Conversion binary not found (soffice/pdftotext). Ensure Dockerfile installs LibreOffice and poppler-utils.' });
+        return res.status(500).json({ error: `Conversion binary not found. Check SOFFICE_PATH (${SOFFICE}) and PDFTOTEXT_PATH (${PDFTOTEXT}).` });
       }
       return res.status(500).json({ error: 'File conversion failed. The file may be unsupported or corrupt.' });
     }
-    const safeOriginalName = path.basename(req.file.originalname).replace(/\.\w+$/, '');
-    const expectedOutputFilename = path.basename(inputFile, path.extname(inputFile)) + `.${outputExtension}`;
-    const outputFile = path.join(outputDir, expectedOutputFilename);
-    if (!fs.existsSync(outputFile)) {
+
+    const outputFile = getLatestFile(outputDir, outputExtension);
+    if (!outputFile) {
       console.error('[JOB FAILED] Output file not found after conversion.');
       cleanupFiles(inputFile);
       return res.status(500).json({ error: 'Conversion succeeded, but the output file could not be found.' });
     }
+
+    const safeOriginalName = path.basename(req.file.originalname).replace(/\.\w+$/, '');
     res.download(outputFile, `${safeOriginalName}.${outputExtension}`, (downloadErr) => {
       if (downloadErr) console.error('[DOWNLOAD ERROR]', downloadErr);
       cleanupFiles(inputFile, outputFile);
@@ -112,17 +124,12 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
   });
 };
 
-// --- API Endpoints ---
+// Routes
 app.get('/', (req, res) => res.status(200).send('ConvertAI API is running. Visit /status for resource usage.'));
-
-// Serve status page
-app.get('/status', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// JSON status data
+app.get('/status', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/api/status', (req, res) => {
-  exec('df -h /', (error, stdout, stderr) => {
+  const { exec: sh } = require('child_process');
+  sh('df -h /', (error, stdout) => {
     let diskInfo = { total: 'N/A', used: 'N/A', available: 'N/A', usage: 'N/A' };
     if (!error && stdout) {
       const lines = stdout.trim().split('\n');
@@ -134,50 +141,50 @@ app.get('/api/status', (req, res) => {
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     const usedMem = totalMem - freeMem;
-    const processMemory = process.memoryUsage();
+    const pm = process.memoryUsage();
     const cpus = os.cpus();
-    const data = {
-      service: 'ConvertAI API', status: 'online', timestamp: new Date().toISOString(),
+    res.json({
+      service: 'ConvertAI API',
+      status: 'online',
+      timestamp: new Date().toISOString(),
       resources: {
         process: {
           uptime: formatSeconds(process.uptime()),
-          memoryUsage: { rss: formatBytes(processMemory.rss), heapTotal: formatBytes(processMemory.heapTotal), heapUsed: formatBytes(processMemory.heapUsed) },
+          memoryUsage: { rss: formatBytes(pm.rss), heapTotal: formatBytes(pm.heapTotal), heapUsed: formatBytes(pm.heapUsed) },
           nodeVersion: process.version,
         },
         system: {
-          uptime: formatSeconds(os.uptime()), platform: os.platform(), arch: os.arch(),
+          uptime: formatSeconds(os.uptime()),
+          platform: os.platform(),
+          arch: os.arch(),
           cpu: { model: (cpus[0] && cpus[0].model) || 'unknown', cores: cpus.length, loadAverage: os.loadavg().map(l => l.toFixed(2)) },
           memory: { total: formatBytes(totalMem), free: formatBytes(freeMem), usedRaw: usedMem, totalRaw: totalMem },
           disk: diskInfo,
+          binaries: { sofficePath: SOFFICE, pdftotextPath: PDFTOTEXT }
         }
       }
-    };
-    res.json(data);
+    });
   });
 });
 
-app.get('/healthz', (req, res) => {
-  res.status(200).json({ ok: true, ts: Date.now() });
-});
+// No-op endpoints to satisfy frontend
+app.get('/healthz', (req, res) => res.status(200).json({ ok: true, ts: Date.now() }));
+app.post('/warm', (req, res) => res.status(200).json({ warmed: false, message: 'Warm disabled by configuration.' }));
 
-app.post('/warm', (req, res) => {
-  res.status(200).json({ warmed: false, message: 'Warm disabled by configuration.' });
-});
-
-// --- Conversion Endpoints ---
+// Conversion endpoints
 app.post('/convert/pptx-to-pdf', upload.single('file'), (req, res) => handleConversion(req, res, 'pdf'));
 app.post('/convert/pdf-to-pptx', upload.single('file'), (req, res) => handleConversion(req, res, 'pptx', 'impress_pdf_import'));
 app.post('/convert/docx-to-pdf', upload.single('file'), (req, res) => handleConversion(req, res, 'pdf'));
 app.post('/convert/pdf-to-docx', upload.single('file'), (req, res) => handleConversion(req, res, 'docx'));
 
-// --- Error Handling & Server Start ---
+// Error handling
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ error: `File too large. Max size is 25MB.` });
+    return res.status(413).json({ error: 'File too large. Max size is 25MB.' });
   }
   if (err) {
     console.error('[UNEXPECTED ERROR]', err);
-    return res.status(500).json({ error: `An unexpected server error occurred.` });
+    return res.status(500).json({ error: 'An unexpected server error occurred.' });
   }
   next();
 });
