@@ -28,7 +28,7 @@ RUN if [ -f python/requirements.txt ]; then pip3 install -r python/requirements.
 # Ensure runtime dirs exist
 RUN mkdir -p uploads public
 
-# Optional: verify binaries exist (helpful for debugging)
+# Optional: verify binaries exist
 RUN which soffice && which pdftotext && python3 --version
 
 EXPOSE 3000
