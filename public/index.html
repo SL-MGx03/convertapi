@@ -87,27 +87,23 @@ MY Website https://slmgx.live
                     if (!response.ok) throw new Error('Network response was not ok');
                     const data = await response.json();
 
-                    // Service Info
                     document.getElementById('status-indicator').classList.add('online');
                     document.getElementById('service-name').textContent = data.service;
                     document.getElementById('service-status').textContent = data.status;
                     document.getElementById('service-status').classList.add('online-text');
                     document.getElementById('service-timestamp').textContent = new Date(data.timestamp).toLocaleString();
                     document.getElementById('service-node').textContent = data.resources.process.nodeVersion;
-                    
-                    // Process Resources
+
                     document.getElementById('process-uptime').textContent = data.resources.process.uptime;
                     document.getElementById('process-rss').textContent = data.resources.process.memoryUsage.rss;
                     document.getElementById('process-heap').textContent = `${data.resources.process.memoryUsage.heapUsed} / ${data.resources.process.memoryUsage.heapTotal}`;
 
-                    // System Resources
                     document.getElementById('system-platform').textContent = `${data.resources.system.platform} (${data.resources.system.arch})`;
                     document.getElementById('system-uptime').textContent = data.resources.system.uptime;
                     document.getElementById('system-cpu').textContent = `${data.resources.system.cpu.model} (${data.resources.system.cpu.cores} cores)`;
                     document.getElementById('system-load').textContent = data.resources.system.cpu.loadAverage.join(', ');
                     document.getElementById('system-disk').textContent = `${data.resources.system.disk.used} / ${data.resources.system.disk.total} (${data.resources.system.disk.usage})`;
 
-                    // Memory Bar
                     document.getElementById('system-mem-free').textContent = `${data.resources.system.memory.free} Free`;
                     document.getElementById('system-mem-total').textContent = `Total: ${data.resources.system.memory.total}`;
                     const memProgress = document.getElementById('system-mem-progress');
@@ -119,9 +115,9 @@ MY Website https://slmgx.live
                     document.getElementById('service-name').textContent = 'Error loading data';
                 }
             };
-            
+
             fetchData();
-            setInterval(fetchData, 15000); // Refresh every 15 seconds
+            setInterval(fetchData, 15000);
         });
     </script>
 </body>
