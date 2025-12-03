@@ -1,7 +1,7 @@
 {
   "name": "convert-ai-api",
-  "version": "1.0.0",
-  "description": "File conversion API for ConvertAI, running on Replit.",
+  "version": "2.1.1",
+  "description": "File conversion API for ConvertAI, deployable on Render.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -12,10 +12,11 @@
     "multer": "^1.4.5-lts.1"
   },
   "keywords": [
-    "replit",
+    "render",
     "api",
     "pptx",
     "pdf",
-    "converter"
+    "converter",
+    "docx"
   ]
 }
