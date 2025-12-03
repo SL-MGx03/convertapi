@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: convert-ai-api
+    name: convertapi
     env: docker
     plan: free
     autoDeploy: true
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /healthz
+    healthCheckPath: /
     numInstances: 1
     region: oregon
     envVars:
