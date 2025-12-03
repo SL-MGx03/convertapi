@@ -35,9 +35,9 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- CORS MUST COME BEFORE STATIC/ROUTES ---
-app.use(cors());                    // Allow all origins by default
-app.options('*', cors());           // Handle preflight for all routes
+// --- CORS (before static/routes) ---
+app.use(cors());
+app.options('*', cors());
 
 // --- Static File Setup ---
 app.use(express.static(path.join(__dirname, 'public')));
@@ -80,8 +80,10 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
   console.log(`[JOB START] Converting ${req.file.originalname} to ${outputExtension}.`);
   let command;
   if (outputExtension === 'docx' && req.file.mimetype === 'application/pdf') {
+      // PDF -> DOCX using pdftotext + LibreOffice PDF import
       command = `pdftotext "${inputFile}" - | soffice --headless --infilter="writer_pdf_import" --convert-to docx --outdir "${outputDir}" /dev/stdin`;
   } else {
+      // Generic LibreOffice conversion
       command = `soffice --headless --convert-to ${libreofficeFormat || outputExtension} "${inputFile}" --outdir "${outputDir}"`;
   }
   exec(command, { timeout: 120000 }, (error, stdout, stderr) => {
@@ -89,6 +91,9 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
       console.error(`[JOB FAILED] Error for ${req.file.originalname}:`, stderr || error);
       cleanupFiles(inputFile);
       if (error.killed) return res.status(500).json({ error: 'Conversion process timed out or ran out of memory.' });
+      if ((stderr || '').toString().includes('not found')) {
+        return res.status(500).json({ error: 'Conversion binary not found (soffice/pdftotext). Ensure Dockerfile installs LibreOffice and poppler-utils.' });
+      }
       return res.status(500).json({ error: 'File conversion failed. The file may be unsupported or corrupt.' });
     }
     const safeOriginalName = path.basename(req.file.originalname).replace(/\.\w+$/, '');
@@ -110,45 +115,53 @@ const handleConversion = (req, res, outputExtension, libreofficeFormat) => {
 // --- API Endpoints ---
 app.get('/', (req, res) => res.status(200).send('ConvertAI API is running. Visit /status for resource usage.'));
 
-// Serves the static HTML page
+// Serve status page
 app.get('/status', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Provides status data as JSON
+// JSON status data
 app.get('/api/status', (req, res) => {
-    exec('df -h /', (error, stdout, stderr) => {
-        let diskInfo = { total: 'N/A', used: 'N/A', available: 'N/A', usage: 'N/A' };
-        if (!error && stdout) {
-            const lines = stdout.trim().split('\n');
-            if (lines.length > 1) {
-                const parts = lines[1].split(/\s+/);
-                diskInfo = { total: parts[1], used: parts[2], available: parts[3], usage: parts[4] };
-            }
+  exec('df -h /', (error, stdout, stderr) => {
+    let diskInfo = { total: 'N/A', used: 'N/A', available: 'N/A', usage: 'N/A' };
+    if (!error && stdout) {
+      const lines = stdout.trim().split('\n');
+      if (lines.length > 1) {
+        const parts = lines[1].split(/\s+/);
+        diskInfo = { total: parts[1], used: parts[2], available: parts[3], usage: parts[4] };
+      }
+    }
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const processMemory = process.memoryUsage();
+    const cpus = os.cpus();
+    const data = {
+      service: 'ConvertAI API', status: 'online', timestamp: new Date().toISOString(),
+      resources: {
+        process: {
+          uptime: formatSeconds(process.uptime()),
+          memoryUsage: { rss: formatBytes(processMemory.rss), heapTotal: formatBytes(processMemory.heapTotal), heapUsed: formatBytes(processMemory.heapUsed) },
+          nodeVersion: process.version,
+        },
+        system: {
+          uptime: formatSeconds(os.uptime()), platform: os.platform(), arch: os.arch(),
+          cpu: { model: (cpus[0] && cpus[0].model) || 'unknown', cores: cpus.length, loadAverage: os.loadavg().map(l => l.toFixed(2)) },
+          memory: { total: formatBytes(totalMem), free: formatBytes(freeMem), usedRaw: usedMem, totalRaw: totalMem },
+          disk: diskInfo,
         }
-        const totalMem = os.totalmem();
-        const freeMem = os.freemem();
-        const usedMem = totalMem - freeMem;
-        const processMemory = process.memoryUsage();
-        const cpus = os.cpus();
-        const data = {
-            service: 'ConvertAI API', status: 'online', timestamp: new Date().toISOString(),
-            resources: {
-                process: {
-                    uptime: formatSeconds(process.uptime()),
-                    memoryUsage: { rss: formatBytes(processMemory.rss), heapTotal: formatBytes(processMemory.heapTotal), heapUsed: formatBytes(processMemory.heapUsed) },
-                    nodeVersion: process.version,
-                },
-                system: {
-                    uptime: formatSeconds(os.uptime()), platform: os.platform(), arch: os.arch(),
-                    cpu: { model: (cpus[0] && cpus[0].model) || 'unknown', cores: cpus.length, loadAverage: os.loadavg().map(l => l.toFixed(2)) },
-                    memory: { total: formatBytes(totalMem), free: formatBytes(freeMem), usedRaw: usedMem, totalRaw: totalMem },
-                    disk: diskInfo,
-                }
-            }
-        };
-        res.json(data);
-    });
+      }
+    };
+    res.json(data);
+  });
+});
+
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true, ts: Date.now() });
+});
+
+app.post('/warm', (req, res) => {
+  res.status(200).json({ warmed: false, message: 'Warm disabled by configuration.' });
 });
 
 // --- Conversion Endpoints ---
